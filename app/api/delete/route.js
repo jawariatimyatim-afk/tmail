@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { redis } from '@/lib/redis'
+import { redis, MAIL_SET_PREFIX } from '@/lib/redis'
 
 export async function GET(request) {
   try {
@@ -11,7 +11,14 @@ export async function GET(request) {
       return NextResponse.json({ success: false }, { status: 400 })
     }
 
-    await redis.del(`mail:${email.toLowerCase()}:${id}`)
+    const emailLower = email.toLowerCase()
+
+    // Hapus email
+    await redis.del(`mail:${emailLower}:${id}`)
+
+    // Hapus dari Set inbox
+    await redis.srem(`${MAIL_SET_PREFIX}${emailLower}`, id)
+
     return NextResponse.json({ success: true })
   } catch (e) {
     return NextResponse.json(

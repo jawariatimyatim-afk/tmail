@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server'
 import {
   redis,
   API_KEY_PREFIX,
+  API_KEY_SET,
   generateApiKey,
   getExpiryTimestamp,
+  safeParse,
 } from '@/lib/redis'
 
 function checkAuth(req) {
@@ -18,17 +20,28 @@ export async function GET(req) {
   }
 
   try {
-    const keys = await redis.keys(`${API_KEY_PREFIX}*`)
+    // Ambil semua key dari Set (BUKAN pakai keys())
+    const keyList = await redis.smembers(API_KEY_SET)
     const data = []
+    const expiredKeys = []
 
-    for (const k of keys) {
-      const val = await redis.get(k)
+    for (const apiKey of keyList) {
+      const val = await redis.get(`${API_KEY_PREFIX}${apiKey}`)
       if (val) {
+        const obj = safeParse(val)
         data.push({
-          key: k.replace(API_KEY_PREFIX, ''),
-          ...(typeof val === 'string' ? JSON.parse(val) : val),
+          key: apiKey,
+          ...obj,
         })
+      } else {
+        // Key sudah expired/dihapus dari Redis, hapus dari Set
+        expiredKeys.push(apiKey)
       }
+    }
+
+    // Bersihkan key yang sudah tidak ada
+    if (expiredKeys.length > 0) {
+      await redis.srem(API_KEY_SET, ...expiredKeys)
     }
 
     data.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
@@ -63,9 +76,13 @@ export async function POST(req) {
       active: true,
     }
 
+    // Simpan data key dengan TTL
     await redis.set(`${API_KEY_PREFIX}${apiKey}`, data, {
       ex: dur * 24 * 60 * 60,
     })
+
+    // Tambahkan ke Set untuk tracking
+    await redis.sadd(API_KEY_SET, apiKey)
 
     return NextResponse.json({
       success: true,

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { redis } from '@/lib/redis'
+import { redis, MAIL_SET_PREFIX } from '@/lib/redis'
 
 export async function POST(request) {
   try {
@@ -20,6 +20,7 @@ export async function POST(request) {
 
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     const key = `mail:${to}:${id}`
+    const setKey = `${MAIL_SET_PREFIX}${to}`
 
     const searchArea = (text + ' ' + html).replace(/&amp;/g, '&')
     const links = [
@@ -38,7 +39,12 @@ export async function POST(request) {
       time: new Date().toISOString(),
     }
 
+    // Simpan email dengan TTL 24 jam
     await redis.set(key, data, { ex: 86400 })
+
+    // Tambahkan ID ke Set inbox + TTL untuk Set
+    await redis.sadd(setKey, id)
+    await redis.expire(setKey, 86400)
 
     return NextResponse.json({ success: true })
   } catch (err) {

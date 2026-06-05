@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { redis, safeParse } from '@/lib/redis'
+import { redis, MAIL_SET_PREFIX, safeParse } from '@/lib/redis'
 
 export async function GET(request) {
   try {
@@ -13,13 +13,27 @@ export async function GET(request) {
       )
     }
 
-    const keys = await redis.keys(`mail:${email.toLowerCase()}:*`)
-    const messages = []
+    const emailLower = email.toLowerCase()
+    const setKey = `${MAIL_SET_PREFIX}${emailLower}`
 
-    for (const key of keys) {
-      const value = await redis.get(key)
+    // Ambil ID email dari Set (BUKAN pakai keys())
+    const mailIds = await redis.smembers(setKey)
+    const messages = []
+    const expiredIds = []
+
+    for (const id of mailIds) {
+      const value = await redis.get(`mail:${emailLower}:${id}`)
       const msg = safeParse(value)
-      if (msg) messages.push(msg)
+      if (msg) {
+        messages.push(msg)
+      } else {
+        expiredIds.push(id)
+      }
+    }
+
+    // Bersihkan email yang sudah expired
+    if (expiredIds.length > 0) {
+      await redis.srem(setKey, ...expiredIds)
     }
 
     messages.sort((a, b) => new Date(b.time) - new Date(a.time))

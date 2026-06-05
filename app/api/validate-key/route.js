@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { redis, API_KEY_PREFIX } from '@/lib/redis'
+import { redis, API_KEY_PREFIX, safeParse } from '@/lib/redis'
 
 export async function POST(request) {
   try {
@@ -14,12 +14,10 @@ export async function POST(request) {
 
     const data = await redis.get(`${API_KEY_PREFIX}${apiKey}`)
     if (!data) {
-      return NextResponse.json(
-        { valid: false, error: 'Key tidak ditemukan' }
-      )
+      return NextResponse.json({ valid: false, error: 'Key tidak ditemukan' })
     }
 
-    const obj = typeof data === 'string' ? JSON.parse(data) : data
+    const obj = safeParse(data)
     const now = Date.now()
 
     if (!obj.active || now > obj.expiry) {
@@ -29,9 +27,7 @@ export async function POST(request) {
       })
     }
 
-    const daysRemaining = Math.ceil(
-      (obj.expiry - now) / (1000 * 60 * 60 * 24)
-    )
+    const daysRemaining = Math.ceil((obj.expiry - now) / (1000 * 60 * 60 * 24))
 
     return NextResponse.json({
       valid: true,
