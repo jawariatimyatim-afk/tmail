@@ -30,6 +30,10 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false)
   const [lastCheck, setLastCheck] = useState(null)
 
+  // Server time untuk countdown realtime (anti-manipulasi jam)
+  const [serverTime, setServerTime] = useState(null)
+
+  // Auto-login dari localStorage saat pertama load
   useEffect(() => {
     const savedKey = localStorage.getItem('tm_key')
     if (savedKey) {
@@ -37,11 +41,49 @@ export default function Home() {
     }
   }, [])
 
+  // Auto-load inbox setiap 10 detik
   useEffect(() => {
     if (!isAuthenticated || !email) return
     const interval = setInterval(() => loadInbox(email), 10000)
     return () => clearInterval(interval)
   }, [isAuthenticated, email])
+
+  // Validasi key realtime setiap 60 detik (auto-logout jika expired)
+  useEffect(() => {
+    if (!isAuthenticated || !apiKey) return
+    const interval = setInterval(async () => {
+      const stillValid = await checkKeyValidity(apiKey)
+      if (!stillValid) {
+        alert('API Key Anda sudah expired. Silakan login ulang.')
+        logout()
+      }
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [isAuthenticated, apiKey])
+
+  // Update countdown setiap detik berdasarkan server time
+  useEffect(() => {
+    if (!keyData?.expiryDate || !serverTime) return
+    const interval = setInterval(() => {
+      setServerTime((prev) => (prev ? prev + 1000 : null))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [keyData, serverTime])
+
+  const checkKeyValidity = async (key) => {
+    try {
+      const res = await fetch('/api/validate-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key }),
+        cache: 'no-store',
+      })
+      const data = await res.json()
+      return data.valid
+    } catch {
+      return false
+    }
+  }
 
   const validateStoredKey = async (key) => {
     try {
@@ -49,12 +91,14 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: key }),
+        cache: 'no-store',
       })
       const data = await res.json()
 
       if (data.valid) {
         setApiKey(key)
         setKeyData(data)
+        setServerTime(data.serverTime || Date.now())
         setIsAuthenticated(true)
         return true
       }
@@ -99,9 +143,10 @@ export default function Home() {
     setEmail('')
     setInbox([])
     setActiveMessage(null)
+    setServerTime(null)
   }
 
-  // ✅ FUNGSI YANG DIPERBAIKI
+  // NEW INBOX: Generate email baru + reset semua state
   const generateEmail = async () => {
     setLoading(true)
     setActiveMessage(null)
@@ -110,9 +155,7 @@ export default function Home() {
     try {
       const res = await fetch(`/api/generate?t=${Date.now()}`, {
         cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache',
-        },
+        headers: { 'Cache-Control': 'no-cache' },
       })
       const data = await res.json()
 
@@ -126,6 +169,11 @@ export default function Home() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Handler tombol New Inbox
+  const handleNewInbox = async () => {
+    await generateEmail()
   }
 
   const loadInbox = async (targetEmail = email) => {
@@ -151,9 +199,7 @@ export default function Home() {
     if (!confirm('Hapus pesan ini?')) return
 
     try {
-      await fetch(
-        `/api/delete?email=${encodeURIComponent(email)}&id=${id}`
-      )
+      await fetch(`/api/delete?email=${encodeURIComponent(email)}&id=${id}`)
       setInbox((prev) => prev.filter((m) => m.id !== id))
       if (activeMessage?.id === id) setActiveMessage(null)
     } catch (e) {
@@ -167,6 +213,22 @@ export default function Home() {
     alert('Tersalin!')
   }
 
+  // Hitung sisa waktu realtime dari server time
+  const getRemainingTime = () => {
+    if (!keyData?.expiryDate || !serverTime) return '-'
+    const ms = keyData.expiryDate - serverTime
+    if (ms <= 0) return 'Expired'
+
+    const days = Math.floor(ms / (1000 * 60 * 60 * 24))
+    const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+    const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60))
+
+    if (days > 0) return `${days}h ${hours}j`
+    if (hours > 0) return `${hours}j ${minutes}m`
+    return `${minutes}m`
+  }
+
+  // ===== HALAMAN LOGIN (API KEY LOCK) =====
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#0a0f1e] text-white flex items-center justify-center p-4">
@@ -222,6 +284,7 @@ export default function Home() {
     )
   }
 
+  // ===== HALAMAN DASHBOARD UTAMA =====
   return (
     <div className="min-h-screen bg-[#0a0f1e] text-white">
       <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -244,10 +307,11 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Countdown Realtime */}
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-emerald-300">
-              <Clock className="h-4 w-4" />
-              <span className="text-sm font-bold">
-                {keyData?.daysRemaining ?? '-'} hari aktif
+              <Clock className="h-4 w-4 animate-pulse" />
+              <span className="text-sm font-bold font-mono">
+                {getRemainingTime()}
               </span>
             </div>
 
@@ -311,11 +375,14 @@ export default function Home() {
                 </button>
 
                 <button
-                  onClick={generateEmail}
+                  onClick={handleNewInbox}
                   disabled={loading}
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 py-3 font-bold hover:bg-slate-700 disabled:opacity-60 transition"
                 >
-                  <Plus className="h-4 w-4" /> New Inbox
+                  <Plus
+                    className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
+                  />
+                  {loading ? 'Loading...' : 'New Inbox'}
                 </button>
               </div>
 
@@ -344,6 +411,7 @@ export default function Home() {
 
         {/* Email List & Viewer */}
         <div className="grid gap-6 lg:grid-cols-[360px_1fr] min-h-[560px]">
+          {/* Inbox List */}
           <section className="rounded-[32px] border border-white/10 bg-white/5 backdrop-blur-xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-4 bg-black/20">
               <div>
@@ -399,6 +467,7 @@ export default function Home() {
             </div>
           </section>
 
+          {/* Message Viewer */}
           <section className="rounded-[32px] border border-white/10 bg-white/5 backdrop-blur-xl overflow-hidden flex flex-col">
             {!activeMessage ? (
               <div className="flex h-full flex-col items-center justify-center p-10 text-center text-slate-500">

@@ -8,6 +8,9 @@ import {
   safeParse,
 } from '@/lib/redis'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 function checkAuth(req) {
   const auth = req.headers.get('authorization')?.replace('Bearer ', '')
   const [user, pass] = auth ? auth.split(':') : []
@@ -20,32 +23,48 @@ export async function GET(req) {
   }
 
   try {
-    // Ambil semua key dari Set (BUKAN pakai keys())
     const keyList = await redis.smembers(API_KEY_SET)
     const data = []
-    const expiredKeys = []
+    const toRemove = []
+    const now = Date.now() // SERVER TIME
 
     for (const apiKey of keyList) {
       const val = await redis.get(`${API_KEY_PREFIX}${apiKey}`)
+
       if (val) {
         const obj = safeParse(val)
-        data.push({
-          key: apiKey,
-          ...obj,
-        })
+
+        // Cek apakah sudah expired
+        if (now >= obj.expiry) {
+          // Hapus key expired dari Redis & Set
+          await redis.del(`${API_KEY_PREFIX}${apiKey}`)
+          toRemove.push(apiKey)
+        } else {
+          // Key masih aktif
+          data.push({
+            key: apiKey,
+            ...obj,
+            serverTime: now, // kirim server time
+          })
+        }
       } else {
-        // Key sudah expired/dihapus dari Redis, hapus dari Set
-        expiredKeys.push(apiKey)
+        // Key sudah tidak ada di Redis (auto-expired TTL)
+        toRemove.push(apiKey)
       }
     }
 
-    // Bersihkan key yang sudah tidak ada
-    if (expiredKeys.length > 0) {
-      await redis.srem(API_KEY_SET, ...expiredKeys)
+    // Bersihkan semua key expired dari Set sekaligus
+    if (toRemove.length > 0) {
+      await redis.srem(API_KEY_SET, ...toRemove)
     }
 
     data.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    return NextResponse.json({ success: true, keys: data })
+
+    return NextResponse.json({
+      success: true,
+      keys: data,
+      serverTime: now,
+    })
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
@@ -68,26 +87,28 @@ export async function POST(req) {
     }
 
     const apiKey = generateApiKey()
+    const now = Date.now()
     const data = {
       name,
       durationDays: dur,
-      expiry: getExpiryTimestamp(dur),
-      createdAt: Date.now(),
+      expiry: getExpiryTimestamp(dur), // timestamp absolut
+      createdAt: now,
       active: true,
     }
 
-    // Simpan data key dengan TTL
+    // Simpan dengan TTL (auto-delete saat expired)
     await redis.set(`${API_KEY_PREFIX}${apiKey}`, data, {
       ex: dur * 24 * 60 * 60,
     })
 
-    // Tambahkan ke Set untuk tracking
+    // Tambah ke Set untuk tracking
     await redis.sadd(API_KEY_SET, apiKey)
 
     return NextResponse.json({
       success: true,
       apiKey,
       data,
+      serverTime: now,
     })
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 })

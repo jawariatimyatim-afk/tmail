@@ -30,6 +30,9 @@ export default function AdminPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  // Server time untuk countdown realtime (anti-manipulasi jam)
+  const [serverTime, setServerTime] = useState(Date.now())
+
   const authHeader = () => ({
     Authorization: `Bearer ${user}:${pass}`,
   })
@@ -38,7 +41,10 @@ export default function AdminPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/admin/keys', { headers: authHeader() })
+      const res = await fetch('/api/admin/keys', {
+        headers: authHeader(),
+        cache: 'no-store',
+      })
       const data = await res.json()
 
       if (!res.ok) {
@@ -46,6 +52,11 @@ export default function AdminPage() {
       }
 
       setKeys(data.keys || [])
+
+      // Sinkronisasi server time
+      if (data.serverTime) {
+        setServerTime(data.serverTime)
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -61,7 +72,10 @@ export default function AdminPage() {
     }
 
     try {
-      const res = await fetch('/api/admin/keys', { headers: authHeader() })
+      const res = await fetch('/api/admin/keys', {
+        headers: authHeader(),
+        cache: 'no-store',
+      })
       const data = await res.json()
 
       if (!res.ok) {
@@ -70,12 +84,14 @@ export default function AdminPage() {
 
       setIsAuth(true)
       setKeys(data.keys || [])
+      if (data.serverTime) setServerTime(data.serverTime)
       localStorage.setItem('adm_cred', `${user}:${pass}`)
     } catch (e) {
       setError('Login gagal: ' + e.message)
     }
   }
 
+  // Auto-login dari localStorage
   useEffect(() => {
     const saved = localStorage.getItem('adm_cred')
     if (saved) {
@@ -85,13 +101,13 @@ export default function AdminPage() {
         setPass(p)
         fetch('/api/admin/keys', {
           headers: { Authorization: `Bearer ${u}:${p}` },
+          cache: 'no-store',
         })
-          .then((res) =>
-            res.json().then((data) => ({ ok: res.ok, data }))
-          )
+          .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
           .then(({ ok, data }) => {
             if (ok) {
               setKeys(data.keys || [])
+              if (data.serverTime) setServerTime(data.serverTime)
               setIsAuth(true)
             }
           })
@@ -99,6 +115,23 @@ export default function AdminPage() {
       }
     }
   }, [])
+
+  // Update server time setiap detik (countdown realtime)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setServerTime((prev) => prev + 1000)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Auto-refresh keys setiap 30 detik (auto-hapus yang expired)
+  useEffect(() => {
+    if (!isAuth) return
+    const interval = setInterval(() => {
+      loadKeys()
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [isAuth])
 
   const createKey = async () => {
     setGenerating(true)
@@ -122,6 +155,7 @@ export default function AdminPage() {
       setNewKey(data.apiKey)
       setSuccess(`✅ API Key berhasil dibuat untuk ${dur} hari`)
       setName('')
+      if (data.serverTime) setServerTime(data.serverTime)
       await loadKeys()
     } catch (e) {
       setError(e.message)
@@ -166,14 +200,30 @@ export default function AdminPage() {
       minute: '2-digit',
     })
 
+  // Hitung sisa hari berdasarkan SERVER TIME (bukan client)
   const daysLeft = (expiry) =>
-    Math.max(
-      0,
-      Math.ceil((expiry - Date.now()) / (1000 * 60 * 60 * 24))
-    )
+    Math.max(0, Math.ceil((expiry - serverTime) / (1000 * 60 * 60 * 24)))
 
-  const isExpired = (expiry) => Date.now() > expiry
+  // Cek expired berdasarkan SERVER TIME
+  const isExpired = (expiry) => serverTime >= expiry
 
+  // Countdown detail (hari, jam, menit) realtime
+  const getCountdown = (expiry) => {
+    const ms = expiry - serverTime
+    if (ms <= 0) return 'Expired'
+
+    const days = Math.floor(ms / (1000 * 60 * 60 * 24))
+    const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+    const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60))
+    const seconds = Math.floor((ms % (1000 * 60)) / 1000)
+
+    if (days > 0) return `${days}h ${hours}j ${minutes}m`
+    if (hours > 0) return `${hours}j ${minutes}m ${seconds}d`
+    if (minutes > 0) return `${minutes}m ${seconds}d`
+    return `${seconds}d`
+  }
+
+  // ===== HALAMAN LOGIN =====
   if (!isAuth) {
     return (
       <div className="min-h-screen bg-[#0a0f1e] text-white flex items-center justify-center p-4">
@@ -238,6 +288,7 @@ export default function AdminPage() {
     )
   }
 
+  // ===== HALAMAN DASHBOARD ADMIN =====
   return (
     <div className="min-h-screen bg-[#0a0f1e] text-white">
       <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -252,7 +303,15 @@ export default function AdminPage() {
             </h1>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Server Time Display */}
+            <div className="inline-flex items-center gap-2 rounded-2xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-300">
+              <Clock className="h-4 w-4 animate-pulse" />
+              <span className="font-mono">
+                {new Date(serverTime).toLocaleTimeString('id-ID')}
+              </span>
+            </div>
+
             <button
               onClick={loadKeys}
               disabled={loading}
@@ -371,13 +430,25 @@ export default function AdminPage() {
                 <p className="text-xs text-emerald-300">
                   ✅ Durasi: <b>{dur} hari</b> | Berakhir:{' '}
                   <b>
-                    {fmtDate(
-                      Date.now() + Number(dur) * 24 * 60 * 60 * 1000
-                    )}
+                    {fmtDate(serverTime + Number(dur) * 24 * 60 * 60 * 1000)}
                   </b>
                 </p>
               </div>
             ) : null}
+
+            {/* Info Box */}
+            <div className="mt-6 rounded-3xl border border-blue-500/20 bg-blue-500/5 p-4">
+              <p className="text-xs font-bold text-blue-300 mb-2 flex items-center gap-2">
+                <Shield className="h-4 w-4" />
+                Fitur Keamanan
+              </p>
+              <ul className="text-xs text-slate-400 space-y-1.5">
+                <li>✓ Key auto-terhapus saat expired</li>
+                <li>✓ Waktu berbasis server (anti-manipulasi jam)</li>
+                <li>✓ Auto-refresh tiap 30 detik</li>
+                <li>✓ Countdown realtime per detik</li>
+              </ul>
+            </div>
           </section>
 
           {/* Keys List Section */}
@@ -407,6 +478,7 @@ export default function AdminPage() {
                 keys.map((item) => {
                   const expired = isExpired(item.expiry)
                   const remaining = daysLeft(item.expiry)
+                  const countdown = getCountdown(item.expiry)
 
                   return (
                     <div
@@ -438,7 +510,7 @@ export default function AdminPage() {
                           >
                             <span
                               className={`h-2 w-2 rounded-full ${
-                                expired ? 'bg-red-400' : 'bg-emerald-400'
+                                expired ? 'bg-red-400' : 'bg-emerald-400 animate-pulse'
                               }`}
                             ></span>
                             {expired ? '✕ EXPIRED' : '✓ ACTIVE'}
@@ -452,30 +524,26 @@ export default function AdminPage() {
                           </code>
                         </div>
 
-                        {/* Info */}
+                        {/* Info - Countdown Realtime */}
                         <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-                            <div className="text-slate-500">Sisa Waktu</div>
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                            <div className="text-slate-500 mb-1">Sisa Waktu</div>
                             <div
-                              className={`font-bold text-lg ${
-                                expired
-                                  ? 'text-red-400'
-                                  : 'text-blue-400'
+                              className={`font-bold font-mono text-sm ${
+                                expired ? 'text-red-400' : 'text-blue-400'
                               }`}
                             >
-                              {remaining}d
+                              {countdown}
                             </div>
                           </div>
-                          <div className="rounded-lg border border-white/10 bg-white/5 p-2">
-                            <div className="text-slate-500">Status</div>
+                          <div className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                            <div className="text-slate-500 mb-1">Status</div>
                             <div
-                              className={`font-bold ${
-                                expired
-                                  ? 'text-red-400'
-                                  : 'text-emerald-400'
+                              className={`font-bold text-sm ${
+                                expired ? 'text-red-400' : 'text-emerald-400'
                               }`}
                             >
-                              {expired ? 'Expired' : 'Running'}
+                              {expired ? 'Expired' : `${remaining} hari lagi`}
                             </div>
                           </div>
                         </div>
