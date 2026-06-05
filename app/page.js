@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Copy,
   RefreshCw,
@@ -101,19 +101,28 @@ export default function Home() {
     setActiveMessage(null)
   }
 
+  // ✅ FUNGSI YANG DIPERBAIKI
   const generateEmail = async () => {
     setLoading(true)
+    setActiveMessage(null)
+    setInbox([])
+
     try {
-      const res = await fetch('/api/generate')
+      const res = await fetch(`/api/generate?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      })
       const data = await res.json()
+
       if (!data.email) throw new Error('Gagal generate email')
 
       setEmail(data.email)
-      setInbox([])
-      setActiveMessage(null)
+      setLastCheck(null)
       await loadInbox(data.email)
     } catch (e) {
-      console.error(e)
+      console.error('Generate error:', e)
     } finally {
       setLoading(false)
     }
@@ -124,7 +133,8 @@ export default function Home() {
     setRefreshing(true)
     try {
       const res = await fetch(
-        `/api/inbox?email=${encodeURIComponent(targetEmail)}`
+        `/api/inbox?email=${encodeURIComponent(targetEmail)}&t=${Date.now()}`,
+        { cache: 'no-store' }
       )
       const data = await res.json()
       setInbox(data.messages || [])
@@ -294,7 +304,7 @@ export default function Home() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => copyText(email)}
-                  disabled={!email}
+                  disabled={!email || loading}
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 py-3 font-bold hover:bg-blue-500 disabled:opacity-60 transition"
                 >
                   <Copy className="h-4 w-4" /> Copy
@@ -302,7 +312,8 @@ export default function Home() {
 
                 <button
                   onClick={generateEmail}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 py-3 font-bold hover:bg-slate-700 transition"
+                  disabled={loading}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 py-3 font-bold hover:bg-slate-700 disabled:opacity-60 transition"
                 >
                   <Plus className="h-4 w-4" /> New Inbox
                 </button>
@@ -310,7 +321,7 @@ export default function Home() {
 
               <button
                 onClick={() => loadInbox()}
-                disabled={!email || refreshing}
+                disabled={!email || refreshing || loading}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/30 py-3 text-sm text-slate-200 hover:border-blue-500/30 disabled:opacity-60 transition"
               >
                 <RefreshCw
@@ -337,7 +348,9 @@ export default function Home() {
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-4 bg-black/20">
               <div>
                 <div className="text-sm font-semibold">Inbox</div>
-                <div className="text-xs text-slate-400">{inbox.length} messages</div>
+                <div className="text-xs text-slate-400">
+                  {inbox.length} messages
+                </div>
               </div>
               <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
                 Secure
@@ -408,7 +421,9 @@ export default function Home() {
                       <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
                         <span>
                           From:{' '}
-                          <b className="text-slate-200">{activeMessage.from}</b>
+                          <b className="text-slate-200">
+                            {activeMessage.from}
+                          </b>
                         </span>
                         <span>
                           Date:{' '}

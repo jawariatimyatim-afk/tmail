@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export async function GET() {
   const domain = process.env.DOMAIN || 'pro.fawk.biz.id'
 
-  // Random unik dengan timestamp
-  const random =
-    Math.random().toString(36).substring(2, 10) +
-    Date.now().toString(36).substring(4, 8)
+  // Generate random yang BENAR-BENAR unik
+  const part1 = Math.random().toString(36).substring(2, 10)
+  const part2 = Date.now().toString(36).slice(-4)
+  const random = part1 + part2
 
   return NextResponse.json(
     {
@@ -15,7 +18,9 @@ export async function GET() {
     },
     {
       headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       },
     }
   )
