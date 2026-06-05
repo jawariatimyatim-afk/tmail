@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server'
 
 export async function GET() {
   const domain = process.env.DOMAIN || 'pro.fawk.biz.id'
-  
-  // Generate random lebih unik dengan timestamp
-  const random = Math.random().toString(36).substring(2, 10) + 
-                 Date.now().toString(36).substring(4, 8)
+
+  // Random unik dengan timestamp
+  const random =
+    Math.random().toString(36).substring(2, 10) +
+    Date.now().toString(36).substring(4, 8)
 
   return NextResponse.json(
     {

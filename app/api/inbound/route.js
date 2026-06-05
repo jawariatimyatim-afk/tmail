@@ -5,11 +5,22 @@ export async function POST(request) {
   try {
     const formData = await request.formData()
 
-    const to = (formData.get('to') || '').toLowerCase()
+    // SendGrid mengirim field "to", "from", "subject", "text", "html"
+    let to = (formData.get('to') || '').toLowerCase()
     const from = formData.get('from') || ''
     const subject = formData.get('subject') || '(Tanpa Subjek)'
     const text = formData.get('text') || ''
     const html = formData.get('html') || ''
+
+    // SendGrid kadang kirim "to" dalam format: "Name <email@domain.com>"
+    // Extract email saja
+    const emailMatch = to.match(/<([^>]+)>/)
+    if (emailMatch) {
+      to = emailMatch[1].toLowerCase()
+    }
+
+    // Bersihkan whitespace
+    to = to.trim()
 
     if (!to) {
       return NextResponse.json(
@@ -22,6 +33,7 @@ export async function POST(request) {
     const key = `mail:${to}:${id}`
     const setKey = `${MAIL_SET_PREFIX}${to}`
 
+    // Extract links
     const searchArea = (text + ' ' + html).replace(/&amp;/g, '&')
     const links = [
       ...new Set(
@@ -39,10 +51,8 @@ export async function POST(request) {
       time: new Date().toISOString(),
     }
 
-    // Simpan email dengan TTL 24 jam
+    // Simpan email + tambah ke Set
     await redis.set(key, data, { ex: 86400 })
-
-    // Tambahkan ID ke Set inbox + TTL untuk Set
     await redis.sadd(setKey, id)
     await redis.expire(setKey, 86400)
 
