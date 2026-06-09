@@ -1,48 +1,46 @@
-import { redis } from '@/lib/redis'
+import { redis } from '@/lib/apikey'
 import { NextResponse } from 'next/server'
 
 export async function POST(request) {
   try {
-    const formData = await request.formData()
-    
-    // Postmark format
-    const to = formData.get('ToFull') || formData.get('To')
-    const from = formData.get('FromFull') || formData.get('From')
-    const subject = formData.get('Subject') || '(No Subject)'
-    const textBody = formData.get('TextBody') || ''
-    const htmlBody = formData.get('HtmlBody') || ''
+    const body = await request.json()
+    console.log('📧 Brevo Inbound:', body)
 
-    console.log('📧 Email from Postmark:', { to, from, subject })
+    // Brevo mengirim data dalam format JSON
+    const to = body.to[0]?.email?.toLowerCase()
+    const from = body.from?.email
+    const subject = body.subject || '(No Subject)'
+    const html = body.htmlContent || ''
+    const text = body.textContent || ''
 
     if (!to) {
-      return NextResponse.json({ error: 'No recipient' }, { status: 400 })
+      return NextResponse.json({ error: 'Recipient missing' }, { status: 400 })
     }
 
-    // Parse "Name <email@domain.com>" format
-    const emailMatch = to.match(/<([^>]+)>/)
-    const recipientEmail = emailMatch ? emailMatch[1] : to.toLowerCase().trim()
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const key = `mail:${to}:${id}`
 
     const emailData = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      id,
       from,
       subject,
-      body: textBody,
-      html: htmlBody,
-      date: new Date().toISOString()
+      body: text,
+      html,
+      time: new Date().toISOString()
     }
 
     // Get existing emails
-    const existing = await redis.get(`email:${recipientEmail}`)
-    const emails = Array.isArray(existing) ? existing : []
+    const existing = await redis.get(`email:${to}`)
+    const emails = existing ? JSON.parse(existing) : []
 
-    // Add new email
+    // Add new
     emails.push(emailData)
 
-    // Save with 1 hour expiry
-    await redis.set(`email:${recipientEmail}`, JSON.stringify(emails), { ex: 3600 })
+    // Save with 24h expiry
+    await redis.set(`email:${to}`, JSON.stringify(emails), { ex: 86400 })
 
-    console.log('✅ Email saved to Redis:', recipientEmail)
-    return NextResponse.json({ success: true })
+    console.log('✅ Email saved:', emailData.id)
+    return NextResponse.json({ success: true, id: emailData.id })
   } catch (error) {
     console.error('❌ Error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
