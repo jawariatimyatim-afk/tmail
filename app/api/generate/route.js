@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 export async function GET() {
-  const domain = process.env.DOMAIN || 'pro.fawk.biz.id'
+  const domain = process.env.DOMAIN || 'pro.fawk.my.id'
 
   // Generate random yang BENAR-BENAR unik
   const part1 = Math.random().toString(36).substring(2, 10)
